@@ -14,7 +14,7 @@ async def check_and_publish(context: CallbackContext) -> None:
     now = datetime.now(tz=ZoneInfo(config.timezone))
     pending_posts: dict = context.bot_data.get("pending_posts", {})
 
-    for msg_id, post in list(pending_posts.items()):
+    for msg_id, post in sorted(pending_posts.items(), key=lambda x: x[1].publish_at):
         window_start = now - timedelta(minutes=5)
         window_end = now + timedelta(minutes=config.lookahead_minutes)
 
