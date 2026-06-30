@@ -95,7 +95,7 @@ def main() -> None:
     )
 
     logging.info("Бот запущен. SOURCE_CHANNEL_ID=%s", config.source_channel_id)
-    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=False, read_timeout=5, write_timeout=5, connect_timeout=5)
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
