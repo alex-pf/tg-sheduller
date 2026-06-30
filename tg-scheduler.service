@@ -1,0 +1,19 @@
+[Unit]
+Description=Telegram Scheduler Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=devuser
+WorkingDirectory=/opt/tg-scheduler
+EnvironmentFile=/opt/tg-scheduler/.env
+ExecStart=/opt/tg-scheduler/venv/bin/python main.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tg-scheduler
+
+[Install]
+WantedBy=multi-user.target
