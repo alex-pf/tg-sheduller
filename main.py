@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 
 from telegram import Update
 from telegram.error import Conflict
@@ -69,7 +70,7 @@ async def handle_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TY
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     if isinstance(context.error, Conflict):
         logging.critical("Конфликт getUpdates — завершаю процесс, systemd перезапустит через 30 сек")
-        raise SystemExit(1)
+        os._exit(1)
     logging.error("Необработанная ошибка: %s", context.error, exc_info=context.error)
 
 
