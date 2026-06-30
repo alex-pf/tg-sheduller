@@ -68,10 +68,9 @@ async def handle_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     if isinstance(context.error, Conflict):
-        logging.warning("Конфликт getUpdates — жду 30 сек перед повтором...")
-        await asyncio.sleep(30)
-    else:
-        logging.error("Необработанная ошибка: %s", context.error, exc_info=context.error)
+        logging.critical("Конфликт getUpdates — завершаю процесс, systemd перезапустит через 30 сек")
+        raise SystemExit(1)
+    logging.error("Необработанная ошибка: %s", context.error, exc_info=context.error)
 
 
 def main() -> None:
