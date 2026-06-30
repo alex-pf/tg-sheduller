@@ -1,77 +1,68 @@
 import asyncio
 import logging
-import os
+import signal
 
-from telegram import Update
-from telegram.error import Conflict
-from telegram.ext import (
-    Application,
-    ChatMemberHandler,
-    CommandHandler,
-    ContextTypes,
-    MessageHandler,
-    filters,
-)
+from telegram import Bot, Update
+from telegram.ext import Application, CommandHandler, ContextTypes
 
 from bot.config import load_config
 from bot.parser import parse_message
 from bot.scheduler import check_and_publish
 
+logger = logging.getLogger(__name__)
 
-async def handle_source_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    config = context.bot_data["config"]
-    msg = update.effective_message
-    if msg is None:
+
+async def poll_updates(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Каждую минуту забирает новые updates через короткий poll (timeout=0, без конфликтов)."""
+    config = context.job.data
+    bot: Bot = context.bot
+
+    offset = context.bot_data.get("update_offset", 0)
+    try:
+        updates = await bot.get_updates(
+            offset=offset, timeout=0, limit=100,
+            allowed_updates=["message", "my_chat_member"],
+        )
+    except Exception as e:
+        logger.error("Ошибка get_updates: %s", e)
         return
-    post = parse_message(msg, config)
-    if post is None:
-        return
-    context.bot_data.setdefault("pending_posts", {})[post.source_message_id] = post
-    logging.info(
-        "Добавлен пост в очередь: id=%s, channel=%s, at=%s",
-        post.source_message_id,
-        post.channel,
-        post.publish_at,
-    )
+
+    for update in updates:
+        context.bot_data["update_offset"] = update.update_id + 1
+
+        if update.my_chat_member:
+            result = update.my_chat_member
+            chat = result.chat
+            status = result.new_chat_member.status
+            channels = context.bot_data.setdefault("admin_channels", {})
+            if status == "administrator":
+                channels[chat.id] = {"id": chat.id, "title": chat.title, "username": chat.username}
+                logger.info("Бот стал админом в: %s (%s)", chat.title, chat.id)
+            elif status in ("left", "kicked", "member"):
+                channels.pop(chat.id, None)
+
+        if update.message:
+            msg = update.message
+            # Сообщение из технического канала — добавить в очередь
+            if msg.chat_id == config.source_channel_id:
+                post = parse_message(msg, config)
+                if post is not None:
+                    context.bot_data.setdefault("pending_posts", {})[post.source_message_id] = post
+                    logger.info("Пост в очереди: id=%s channel=%s at=%s",
+                                post.source_message_id, post.channel, post.publish_at)
+            # Команда /channels в личке или в группе
+            elif msg.text and msg.text.startswith("/channels"):
+                await _send_channels(bot, msg.chat_id, context.bot_data)
 
 
-async def channels_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    channels: dict = context.bot_data.get("admin_channels", {})
+async def _send_channels(bot: Bot, chat_id: int, bot_data: dict) -> None:
+    channels: dict = bot_data.get("admin_channels", {})
     if not channels:
-        await update.message.reply_text("Нет доступных каналов.")
+        await bot.send_message(chat_id, "Нет доступных каналов.")
         return
-    lines = [
-        f"• {info['title']} ({info.get('username') or info['id']})"
-        for info in channels.values()
-    ]
-    await update.message.reply_text("Каналы:\n" + "\n".join(lines))
-
-
-async def handle_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    result = update.my_chat_member
-    if result is None:
-        return
-    chat = result.chat
-    new_status = result.new_chat_member.status
-
-    channels: dict = context.bot_data.setdefault("admin_channels", {})
-    if new_status == "administrator":
-        channels[chat.id] = {
-            "id": chat.id,
-            "title": chat.title,
-            "username": chat.username,
-        }
-        logging.info("Бот добавлен администратором в канал: %s (%s)", chat.title, chat.id)
-    elif new_status in ("left", "kicked", "member"):
-        channels.pop(chat.id, None)
-        logging.info("Бот удалён из канала: %s (%s)", chat.title, chat.id)
-
-
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if isinstance(context.error, Conflict):
-        logging.critical("Конфликт getUpdates — завершаю процесс, systemd перезапустит через 30 сек")
-        os._exit(1)
-    logging.error("Необработанная ошибка: %s", context.error, exc_info=context.error)
+    lines = [f"• {info['title']} ({info.get('username') or info['id']})"
+             for info in channels.values()]
+    await bot.send_message(chat_id, "Каналы:\n" + "\n".join(lines))
 
 
 def main() -> None:
@@ -82,31 +73,33 @@ def main() -> None:
 
     config = load_config()
 
-    app = Application.builder().token(config.bot_token).build()
+    app = Application.builder().token(config.bot_token).updater(None).build()
     app.bot_data["config"] = config
 
-    app.add_error_handler(error_handler)
-    app.add_handler(CommandHandler("channels", channels_command))
-    app.add_handler(
-        ChatMemberHandler(handle_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER)
-    )
-    app.add_handler(
-        MessageHandler(
-            filters.Chat(config.source_channel_id) & (filters.TEXT | filters.PHOTO),
-            handle_source_message,
-        )
-    )
+    # Опрос обновлений каждые 30 сек (short poll, никогда не конфликтует)
+    app.job_queue.run_repeating(poll_updates, interval=30, first=5, data=config,
+                                name="poll_updates")
+    # Публикация запланированных постов
+    app.job_queue.run_repeating(check_and_publish, interval=config.check_interval, first=15,
+                                data=config, name="check_and_publish")
 
-    app.job_queue.run_repeating(
-        check_and_publish,
-        interval=config.check_interval,
-        first=10,
-        data=config,
-        name="check_and_publish",
-    )
+    async def run() -> None:
+        async with app:
+            await app.start()
+            # Сбросить webhook если был
+            await app.bot.delete_webhook(drop_pending_updates=False)
+            logger.info("Бот запущен (short-poll режим). SOURCE_CHANNEL_ID=%s",
+                        config.source_channel_id)
 
-    logging.info("Бот запущен. SOURCE_CHANNEL_ID=%s", config.source_channel_id)
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+            stop_event = asyncio.Event()
+            loop = asyncio.get_running_loop()
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                loop.add_signal_handler(sig, stop_event.set)
+
+            await stop_event.wait()
+            logger.info("Получен сигнал завершения, останавливаю бота...")
+
+    asyncio.run(run())
 
 
 if __name__ == "__main__":
