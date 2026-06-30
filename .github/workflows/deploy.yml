@@ -21,5 +21,8 @@ jobs:
             cd /opt/tg-scheduler
             git pull origin main
             venv/bin/pip install -r requirements.txt --quiet
-            sudo systemctl restart tg-scheduler
+            sudo systemctl stop tg-scheduler
+            sleep 20
+            sudo systemctl start tg-scheduler
+            sleep 5
             sudo systemctl status tg-scheduler --no-pager
