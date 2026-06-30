@@ -1,6 +1,8 @@
+import asyncio
 import logging
 
 from telegram import Update
+from telegram.error import Conflict
 from telegram.ext import (
     Application,
     ChatMemberHandler,
@@ -64,6 +66,14 @@ async def handle_my_chat_member(update: Update, context: ContextTypes.DEFAULT_TY
         logging.info("Бот удалён из канала: %s (%s)", chat.title, chat.id)
 
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if isinstance(context.error, Conflict):
+        logging.warning("Конфликт getUpdates — жду 30 сек перед повтором...")
+        await asyncio.sleep(30)
+    else:
+        logging.error("Необработанная ошибка: %s", context.error, exc_info=context.error)
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -75,6 +85,7 @@ def main() -> None:
     app = Application.builder().token(config.bot_token).build()
     app.bot_data["config"] = config
 
+    app.add_error_handler(error_handler)
     app.add_handler(CommandHandler("channels", channels_command))
     app.add_handler(
         ChatMemberHandler(handle_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER)
