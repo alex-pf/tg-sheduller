@@ -54,6 +54,14 @@ def _parse_time(time_str: str, config: Config) -> "datetime | None":
     except ValueError:
         pass
 
+    # DD.MM.YY HH:MM (2-digit year)
+    try:
+        t = datetime.strptime(s, "%d.%m.%y %H:%M")
+        dt = datetime(t.year, t.month, t.day, t.hour, t.minute, tzinfo=tz)
+        return dt
+    except ValueError:
+        pass
+
     # DD.MM.YYYY HH:MM
     try:
         t = datetime.strptime(s, "%d.%m.%Y %H:%M")

@@ -72,6 +72,14 @@ def test_time_full_date():
     assert result.publish_at == datetime(2025, 12, 25, 15, 0, tzinfo=tz)
 
 
+# 5b. Дата DD.MM.YY HH:MM (2-значный год)
+def test_time_dd_mm_yy():
+    msg = make_message(text="channel: @ch\ntime: 02.07.26 10:11")
+    result = parse_message(msg, make_config())
+    assert result is not None
+    assert result.publish_at == datetime(2026, 7, 2, 10, 11, tzinfo=tz)
+
+
 # 6. Без строки channel:
 def test_missing_channel():
     msg = make_message(text="time: 14:30\nТекст")
